@@ -1,12 +1,18 @@
+
 const express = require('express')
 const app = express()
+require('dotenv').config()
 const bodyParser = require('body-parser')
-const morgan = require('morgan')
+
+const People = require('./models/person')
+
+app.use(bodyParser.json())
 const cors = require('cors')
 
-app.use(cors())
-app.use(bodyParser.json())
+const morgan = require('morgan')
 app.use(express.static('build'))
+
+app.use(cors())
 
 
 morgan.token('post', (req, res) => {
@@ -42,69 +48,99 @@ let persons = [
 ]
 
 
-const generateId = (maxValue) => {
-    const ids = persons.map(id => id.id)
-    console.log(ids)
-    let id = 0
-    while (ids.includes(id)) {
-        id = Math.floor(Math.random() * Math.floor(maxValue))    
-    }
-    return id
-
-}
-
-app.post('/api/persons', (request, response) => {
-    
+app.post('/api/persons', (request, response, next) => {
     const body = request.body
-    const names = persons.map(name => name.name)
-    
-    if (!body.name || !body.number) {
-        return response.status(400).json({
-            error: 'content missing'
+
+    const person = new People({
+        name: body.name,
+        number: body.number
+    })
+
+    person.save()
+        .then(savedPerson => {
+        response.json(savedPerson.toJSON())
+    })
+    .catch(error => next(error))
+})
+
+app.get('/info', (request, response, next) => {
+    People.countDocuments({}, (error, count) => {
+        if (error) {
+            response.send(error)
+        } else {
+            response.send(`<h3>${Date()}</h3>
+            <p>Puhelinluettelossa ${count} henkilön tiedot</p>`)
+        }
+    })
+
+})
+
+app.get('/api/persons', (request, response) => {
+    People.find({}).then(peoples => {
+        response.json(peoples.map(people => people.toJSON()))
+    })
+    .catch(error => next(error))
+})
+
+
+
+app.get('/api/persons/:id', (request, response, next) => {
+    People.findById(request.params.id)
+        .then(person => {
+            if (person) {
+                response.json(person.toJSON())
+            } else {
+                response.status(204).end()
+            }
+        
         })
-    } else if (names.includes(body.name)) {
-        return response.status(400).json({
-            error: 'name must be unique'
+        .catch(error => next(error))
+})
+        
+
+app.delete('/api/persons/:id', (request, response, next) => {
+    People.findByIdAndRemove(request.params.id)
+        .then(result => {
+            response.status(204).end()
         })
-    }
+        .catch(error => next(error))
+})
+
+app.put('/api/persons/:id', (request, response) => {
+    const body = request.body
 
     const person = {
         name: body.name,
         number: body.number,
-        id: generateId(9999)
     }
 
-    persons = persons.concat(person)
-    response.json(person)
+    People.findByIdAndUpdate(request.params.id, person, {new: true})
+        .then(updatedPerson => {
+            response.json(updatedPerson.toJSON())
+        })
+        .catch(error => next(error))
 })
 
-app.get('/info', (request, response) => {
-    response.send(`<div>Phonebook has info for ${persons.length} people </div>\n
-                    <div> ${new Date()}`)
-})
-
-app.get('/api/persons', (request, response) => {
-    response.json(persons)
-})
-
-app.get('/api/persons/:id', (request, response) => {
-    const id = Number(request.params.id)
-    const person = persons.find(person => person.id === id)
-
-    if (person) {
-        response.json(person)
-    } else {
-        response.status(404).end()
+const unknownEndpoint = (request, response) => {
+    response.status(404).send({ error: 'unknown endpoint' })
+  }
+  
+  app.use(unknownEndpoint)
+  
+  const errorHandler = (error, request, response, next) => {
+    console.error(error.message)
+  
+    if (error.name === 'CastError' && error.kind == 'ObjectId') {
+      return response.status(400).send({ error: 'malformatted id' })
+    } else if (error.name === 'ValidationError') {
+        return response.status(400).json({ error: error.message })
     }
-})
+    next(error)
+  }
+  
+  app.use(errorHandler)
 
-app.delete('/api/persons/:id', (request, response) => {
-    const id = Number(request.params.id)
-    persons = persons.filter(person => person.id !== id)
-    response.status(204).end()
-})
-
-const PORT = process.env.PORT || 3001
+const PORT = process.env.PORT
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`)
 })
